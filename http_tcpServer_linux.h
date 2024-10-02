@@ -12,25 +12,22 @@ namespace http
     class TcpServer
     {
         public:
-            TcpServer(std::string ip_address, int port);
+            TcpServer(const std::string ip_address, int port);
             ~TcpServer();
-            void startListen();
+            int start();
+            void listenForConnections();
 
         private:
             std::string m_ip_address;
             int m_port;
             int m_socket;
-            int m_new_socket;
-            long m_incomingMessage;
             struct sockaddr_in m_socketAddress;
             socklen_t m_socketAddress_len;
-            std::string m_serverMessage;
 
-            int startServer();
-            void closeServer();
-            void acceptConnection(int &new_socket);
+            int createSocket();
+            int bindSocket();
+            void handleClient(int client_socket);
             std::string buildResponse();
-            void sendResponse();
     };
 }
 #endif

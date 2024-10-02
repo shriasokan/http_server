@@ -4,136 +4,107 @@
 #include <sstream>
 #include <unistd.h>
 
-namespace
-{
+namespace {
     const int BUFFER_SIZE = 30720;
 
-    void log(const std::string &message){
+    void log(const std::string &message) {
         std::cout << message << std::endl;
     }
 
-    void exitWithError(const std::string &errorMessage){
+    void exitWithError(const std::string &errorMessage) {
         log("ERROR: " + errorMessage);
         exit(1);
     }
 }
-namespace http
-{
-    TcpServer::TcpServer(std::string ip_address, int port) : 
-        m_ip_address(ip_address), m_port(port), m_socket(),
-        m_new_socket(), m_incomingMessage(), m_socketAddress(),
-        m_serverMessage(buildResponse())
-    {
+namespace http {
+    TcpServer::TcpServer(const std::string ip_address, int port) 
+        : m_ip_address(ip_address), m_port(port), m_socket(-1), m_socketAddress_len(sizeof(m_socketAddress)) {
         m_socketAddress.sin_family = AF_INET;
         m_socketAddress.sin_port = htons(m_port);
-        //m_socketAddress.sin_addr.s_addr = inet_addr(m_ip_address.c_str());
-        m_socketAddress.sin_addr.s_addr = INADDR_ANY;
+        m_socketAddress.sin_addr.s_addr = inet_addr(m_ip_address.c_str());
+    }
 
-        //m_socketAddress_len = sizeof(m_socketAddress);
-        m_socketAddress_len = static_cast<socklen_t>(sizeof(m_socketAddress));
-        
-        if (startServer() != 0){
-            std::ostringstream ss;
-            ss << "Failed to start server with PORT: " << ntohs(m_socketAddress.sin_port);
-            log(ss.str());
+    TcpServer::~TcpServer() {
+        if (m_socket >= 0) {
+            close(m_socket);
         }
     }
 
-    TcpServer::~TcpServer()
-    {
-        closeServer();
-    }
-
-    int TcpServer::startServer(){
-        m_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int TcpServer::createSocket(){
+        m_socket = socket(AF_INET, SOCK_STREAM, 0);
         if (m_socket < 0){
-            exitWithError("Cannot create socket");
-            return 1;
+            std::cerr << "Error: Could not create socket." << std::endl;
+            return -1;
         }
 
         int opt = 1;
         if (setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-            perror("setsockopt failed");
-            exitWithError("Cannot set socket options");
-            return 1;
-        }
-
-        std::ostringstream ss;
-        ss << "Attempting to bind to ADDRESS: " << inet_ntoa(m_socketAddress.sin_addr)
-           << " PORT: " << ntohs(m_socketAddress.sin_port);
-        log(ss.str());
-
-        if (bind(m_socket, (sockaddr *)&m_socketAddress, m_socketAddress_len < 0)){
-            perror("bind failed");
-            exitWithError("Cannot connect socket to address");
-            return 1;
+            std::cerr << "Error: Could not set socket options (SO_REUSEADDR)." << std::endl;
+            close(m_socket);
+            return -1;
         }
 
         return 0;
     }
 
-    void TcpServer::closeServer(){
-        close(m_socket);
-        close(m_new_socket);
-        exit(0);
+    int TcpServer::bindSocket() {
+        if (bind(m_socket, (struct sockaddr*)&m_socketAddress, m_socketAddress_len) < 0) {
+            std::cerr << "Error: Could not bind to " << m_ip_address << ":" << m_port << std::endl;
+            close(m_socket);
+            return -1;
+        }
+        
+        return 0;
     }
 
-    void TcpServer::startListen(){
-        if (listen(m_socket, 20) < 0){
-            exitWithError("Socket listen failed");
+    int TcpServer::start() {
+        if (createSocket() < 0) {
+            return -1;
         }
 
-        std::ostringstream ss;
-        ss << "\n*** Listening on ADDRESS: " << inet_ntoa(m_socketAddress.sin_addr) << "PORT: " << ntohs(m_socketAddress.sin_port) << "***\n\n";
-        log(ss.str());
+        if (bindSocket() < 0) {
+            return -1;
+        }
 
-        int bytesReceived;
+        std::cout << "Server started successfully on " << m_ip_address << ":" << m_port << std::endl;
+        return 0;
+    }
 
-        while(true){
-            log("Waiting for a new connection\n\n\n");
-            acceptConnection(m_new_socket);
+    void TcpServer::listenForConnections() {
+        if (listen(m_socket, 20) < 0) {
+            std::cerr << "Error: Failed to listen on socket." << std::endl;
+            return;
+        }
 
-            char buffer[BUFFER_SIZE] = {0};
-            bytesReceived = read(m_new_socket, buffer, BUFFER_SIZE);
-            if (bytesReceived < 0){
-                exitWithError("Failed to read bytes from client socket connection");
+        std::cout << "Listening for incoming connections..." << std::endl;
+
+        while (true) {
+            int client_socket = accept(m_socket, nullptr, nullptr);
+            if (client_socket < 0) {
+                std::cerr << "Error: Failed to accept connection." << std::endl;
+                continue;
             }
-
-            std::ostringstream ss;
-            ss << "Received Request from client\n\n";
-            log(ss.str());
-            sendResponse();
-            close(m_new_socket);
+            handleClient(client_socket);
+            close(client_socket);
         }
     }
 
-    void TcpServer::acceptConnection(int &new_socket){
-        new_socket = accept(m_socket, (sockaddr *)&m_socketAddress, &m_socketAddress_len);
-        if (new_socket < 0){
-            std::ostringstream ss;
-            ss << "Server failed to accept incoming connection from ADDRESS: " << inet_ntoa(m_socketAddress.sin_addr) << "; PORT: " << ntohs(m_socketAddress.sin_port);
-            exitWithError(ss.str());
-        }
+    void TcpServer::handleClient(int client_socket) {
+        char buffer[1024] = {0};
+        read(client_socket, buffer, sizeof(buffer));
+        std::cout << "Received request: " << buffer << std::endl;
+        std::string response = buildResponse();
+        send(client_socket, response.c_str(), response.size(), 0);
     }
 
-    std::string TcpServer::buildResponse(){
-        std::string htmlFile = "<!DOCTYPE html><html lang=\"en\"><body><h1> HOME </h1><p> Hello from your Server :) </p></body></html>";
-        std::ostringstream ss;
-        ss << "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: " << htmlFile.size() << "\n\n"
-           << htmlFile;
-
-        return ss.str();
-    }
-
-    void TcpServer::sendResponse(){
-        long bytesSent;
-        bytesSent = write(m_new_socket, m_serverMessage.c_str(), m_serverMessage.size());
-
-        if (bytesSent == m_serverMessage.size()){
-            log("Server Response sent to client\n\n");
-        }
-        else{
-            log("Error sending response to client");
-        }
+    std::string TcpServer::buildResponse() {
+        std::string html = "<html><body><h1>Hello from Server!</h1></body></html>";
+        std::ostringstream response;
+        response << "HTTP/1.1 200 OK\r\n";
+        response << "Content-Type: text/html\r\n";
+        response << "Content-Length: " << html.size() << "\r\n";
+        response << "\r\n";
+        response << html;
+        return response.str();
     }
 }
