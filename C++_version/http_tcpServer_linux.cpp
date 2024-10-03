@@ -98,7 +98,7 @@ namespace http {
     }
 
     std::string TcpServer::buildResponse() {
-        std::string html = "<html><body><h1>Hello from Server!</h1></body></html>";
+        std::string html = "<html><body><h1>C++ HTTP Server</h1></body></html>";
         std::ostringstream response;
         response << "HTTP/1.1 200 OK\r\n";
         response << "Content-Type: text/html\r\n";
